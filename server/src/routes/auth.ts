@@ -6,6 +6,7 @@
  * GET  /api/auth/me        — 返回当前登录老师信息
  * POST /api/auth/logout    — 清除 Cookie
  */
+import crypto from 'node:crypto'
 import { Hono } from 'hono'
 import { setCookie, getCookie, deleteCookie } from 'hono/cookie'
 import { getDb } from '../lib/database.js'
@@ -22,8 +23,23 @@ function feishuAppSecret(): string {
 function publicUrl(): string {
   return process.env.PUBLIC_URL ?? 'http://localhost:5173/homework'
 }
+function publicApiBase(): string {
+  return process.env.PUBLIC_API_BASE ?? '/api'
+}
 function devAuthBypass(): boolean {
   return process.env.DEV_AUTH_BYPASS === 'true'
+}
+function oauthScope(): string {
+  return process.env.FEISHU_OAUTH_SCOPE ?? 'auth:user.id:read user_profile'
+}
+function frontendUrl(path = ''): string {
+  const base = publicUrl().replace(/\/$/, '')
+  return `${base}${path.startsWith('/') ? path : `/${path}`}`
+}
+function authCallbackUrl(): string {
+  if (process.env.FEISHU_REDIRECT_URI) return process.env.FEISHU_REDIRECT_URI
+  const origin = new URL(publicUrl()).origin
+  return `${origin}${publicApiBase().replace(/\/$/, '')}/auth/callback`
 }
 
 function getDevTeacher() {
@@ -32,57 +48,47 @@ function getDevTeacher() {
 }
 
 /** 飞书 OAuth 授权页 URL */
-function buildOAuthUrl(redirectUri: string): string {
+function buildOAuthUrl(redirectUri: string, state: string): string {
   const params = new URLSearchParams({
-    app_id: feishuAppId(),
+    client_id: feishuAppId(),
     redirect_uri: redirectUri,
-    scope: 'contact:user.base:readonly',
     response_type: 'code',
+    scope: oauthScope(),
+    state,
   })
-  return `https://open.feishu.cn/open-apis/authen/v1/authorize?${params}`
+  return `https://accounts.feishu.cn/open-apis/authen/v1/authorize?${params}`
 }
 
 /** 用 code 换取 user_access_token */
-async function exchangeCode(code: string): Promise<{ accessToken: string; openId: string; name: string } | null> {
-  // Step 1: 获取 app_access_token
-  const appTokenRes = await fetch('https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal', {
+async function exchangeCode(code: string, redirectUri: string): Promise<{ accessToken: string; openId: string; name: string } | null> {
+  const userTokenRes = await fetch('https://open.feishu.cn/open-apis/authen/v2/oauth/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ app_id: feishuAppId(), app_secret: feishuAppSecret() }),
-  })
-  const appTokenData = await appTokenRes.json() as any
-  if (!appTokenData.app_access_token) {
-    console.error('[auth] 获取 app_access_token 失败', appTokenData)
-    return null
-  }
-
-  // Step 2: code 换 user_access_token
-  const userTokenRes = await fetch('https://open.feishu.cn/open-apis/authen/v1/oidc/access_token', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${appTokenData.app_access_token}`,
-    },
-    body: JSON.stringify({ grant_type: 'authorization_code', code }),
+    body: JSON.stringify({
+      grant_type: 'authorization_code',
+      client_id: feishuAppId(),
+      client_secret: feishuAppSecret(),
+      code,
+      redirect_uri: redirectUri,
+    }),
   })
   const userTokenData = await userTokenRes.json() as any
-  if (!userTokenData.data?.access_token) {
+  if (userTokenData.code !== 0 || !userTokenData.access_token) {
     console.error('[auth] code 换 token 失败', userTokenData)
     return null
   }
 
-  // Step 3: 获取用户信息
   const userInfoRes = await fetch('https://open.feishu.cn/open-apis/authen/v1/user_info', {
-    headers: { 'Authorization': `Bearer ${userTokenData.data.access_token}` },
+    headers: { 'Authorization': `Bearer ${userTokenData.access_token}` },
   })
   const userInfo = await userInfoRes.json() as any
-  if (!userInfo.data?.open_id) {
+  if (userInfo.code !== 0 || !userInfo.data?.open_id) {
     console.error('[auth] 获取用户信息失败', userInfo)
     return null
   }
 
   return {
-    accessToken: userTokenData.data.access_token,
+    accessToken: userTokenData.access_token,
     openId: userInfo.data.open_id,
     name: userInfo.data.name ?? '',
   }
@@ -91,24 +97,37 @@ async function exchangeCode(code: string): Promise<{ accessToken: string; openId
 /** GET /api/auth/login — 重定向到飞书 OAuth 页面 */
 router.get('/login', async (c) => {
   if (devAuthBypass()) {
-    const homeworkBase = publicUrl().endsWith('/homework') ? publicUrl() : `${publicUrl()}/homework`
-    return c.redirect(homeworkBase, 302)
+    return c.redirect(frontendUrl(), 302)
   }
-  if (!feishuAppId()) {
-    return c.json({ error: 'FEISHU_APP_ID 未配置，请联系管理员' }, 500)
+  if (!feishuAppId() || !feishuAppSecret()) {
+    return c.json({ error: '飞书应用未配置，请联系管理员设置 FEISHU_APP_ID / FEISHU_APP_SECRET' }, 500)
   }
-  const redirectUri = `${publicUrl().replace(/\/homework$/, '')}/api/auth/callback`
-  return c.redirect(buildOAuthUrl(redirectUri), 302)
+  const redirectUri = authCallbackUrl()
+  const state = crypto.randomUUID()
+  setCookie(c, 'feishu_oauth_state', state, {
+    httpOnly: true,
+    sameSite: 'Lax',
+    maxAge: 10 * 60,
+    path: '/',
+    secure: publicUrl().startsWith('https://'),
+  })
+  return c.redirect(buildOAuthUrl(redirectUri, state), 302)
 })
 
 /** GET /api/auth/callback — 飞书 OAuth 回调 */
 router.get('/callback', async (c) => {
   const code = c.req.query('code')
+  const state = c.req.query('state')
+  const savedState = getCookie(c, 'feishu_oauth_state')
+  deleteCookie(c, 'feishu_oauth_state', { path: '/' })
   if (!code) {
     return c.html('<h2>授权失败：缺少 code 参数</h2>', 400)
   }
+  if (!state || !savedState || state !== savedState) {
+    return c.html('<h2>授权失败：state 校验不通过，请重新登录</h2>', 400)
+  }
 
-  const userInfo = await exchangeCode(code)
+  const userInfo = await exchangeCode(code, authCallbackUrl())
   if (!userInfo) {
     return c.html('<h2>飞书登录失败，请重试</h2>', 500)
   }
@@ -137,11 +156,11 @@ router.get('/callback', async (c) => {
     sameSite: 'Lax',
     maxAge: 7 * 24 * 60 * 60,
     path: '/',
+    secure: publicUrl().startsWith('https://'),
   })
 
   // 302 跳回工作台
-  const homeworkBase = publicUrl().endsWith('/homework') ? publicUrl() : `${publicUrl()}/homework`
-  return c.redirect(homeworkBase, 302)
+  return c.redirect(frontendUrl(), 302)
 })
 
 /** GET /api/auth/me — 返回当前登录老师信息 */

@@ -70,7 +70,7 @@ export const useApp = defineStore('app', () => {
   async function logout() {
     await fetch(`${API}/auth/logout`, { method: 'POST', credentials: 'include' })
     loggedTeacher.value = null
-    window.location.href = '/homework/login'
+    window.location.href = `${import.meta.env.BASE_URL}login`
   }
 
   /** 老师列表 */
