@@ -17,7 +17,7 @@ import { defineConfig } from 'vite'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig({
-  base: '/homework/',
+  base: process.env.VITE_BASE_PATH || '/homework/',
   envDir: './env',
   build: {
     outDir: 'dist',
