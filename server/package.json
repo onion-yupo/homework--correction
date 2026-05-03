@@ -1,0 +1,29 @@
+{
+  "name": "@app/homework-correction-server",
+  "type": "module",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "build": "tsc",
+    "test:tos": "tsx src/scripts/test-tos-upload.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1040.0",
+    "@hono/node-server": "^1.14.3",
+    "better-sqlite3": "^12.8.0",
+    "dotenv": "^16.5.0",
+    "hono": "^4.7.4",
+    "jsonwebtoken": "^9.0.3",
+    "sharp": "^0.34.5",
+    "tencentcloud-sdk-nodejs-ocr": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^24.1.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}

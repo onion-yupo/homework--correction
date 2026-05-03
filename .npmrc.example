@@ -1,0 +1,9 @@
+auto-install-peers = true
+legacy-peer-deps = true
+
+@guanghe:registry=https://npm.yc345.tv/
+@guanghe-pub:registry=https://npm.yc345.tv/
+registry=https://npm.yc345.tv/
+
+# 本地部署时如需访问私有 npm 源，请在 .npmrc 中配置 token，不要提交真实 token。
+# //npm.yc345.tv/:_authToken="your_token_here"
