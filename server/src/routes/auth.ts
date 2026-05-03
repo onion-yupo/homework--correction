@@ -139,7 +139,10 @@ router.get('/callback', async (c) => {
   if (!teacher) {
     console.warn(`[auth] 飞书账号未绑定老师：name=${userInfo.name}, open_id=${userInfo.openId}`)
     return c.html(
-      `<h2>无权访问</h2><p>你的飞书账号（${userInfo.name}）未在系统白名单中，请联系管理员。</p>`,
+      `<h2>无权访问</h2>
+       <p>你的飞书账号（${userInfo.name}）未在系统白名单中，请联系管理员。</p>
+       <p>请把下面的 open_id 绑定到对应老师账号：</p>
+       <pre style="padding:12px;background:#f5f5f5;border-radius:8px;white-space:pre-wrap">${userInfo.openId}</pre>`,
       403,
     )
   }
